@@ -678,11 +678,12 @@ MINERALS = {          # DT (us/ft), GR (API), RHOB (g/cc)
 NON_RADIOACTIVE = ['Halite', 'Anhydrite', 'Tachyhydrite', 'Calcite', 'Dolomite']
 
 # Minerals allowed for each upscaled lithology (max 3: two logs + closure).
-# HALITE and ANHYDRITE share the same set, so a halite/anhydrite label error
-# does not matter: VP decides how much anhydrite there is.
+# HALITE and ANHYDRITE share the same set (no Clay), so a halite/anhydrite label
+# error does not matter: VP decides how much anhydrite there is. Carnallite
+# captures thin K-salt beds not resolved by the lithology log (GR high + VP low).
 MINERAL_SETS = {
-    'HALITE':    ['Halite', 'Anhydrite', 'Clay'],
-    'ANHYDRITE': ['Halite', 'Anhydrite', 'Clay'],
+    'HALITE':    ['Halite', 'Anhydrite', 'Carnallite'],
+    'ANHYDRITE': ['Halite', 'Anhydrite', 'Carnallite'],
     'K_SALT':    ['Halite', 'Carnallite', 'Tachyhydrite'],
     'CARBONATE': ['Calcite', 'Anhydrite', 'Clay'],
     'MARL_CLAY': ['Clay', 'Calcite', 'Halite'],

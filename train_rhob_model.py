@@ -24,7 +24,7 @@ same folder.  Dependencies (Anaconda Prompt):
 # ==============================================================================
 from pathlib import Path
 
-BASE_DIR = Path(r"C:\Users\10090994\Documents\Github\Codigos\machine_learning_predict_wells")       # <-- EDIT ME
+BASE_DIR = Path(__file__).resolve().parent if '__file__' in globals() else Path.cwd()   # project folder (edit if needed)
 TRAIN_LAS_DIR = BASE_DIR / "PocosSantos"     # folder with the training .las files
 OUT_DIR = BASE_DIR / "model_output"          # everything produced by this script
 CODE_DIR = None   # folder with rhob_common.py; None = same folder as this script

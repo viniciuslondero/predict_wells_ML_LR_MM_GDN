@@ -21,7 +21,7 @@ Run in Spyder with F5 or cell by cell. Needs rhob_common.py in the same folder.
 # ==============================================================================
 from pathlib import Path
 
-BASE_DIR = Path(r"C:\Users\10090994\Documents\Github\Codigos\machine_learning_predict_wells")       # <-- EDIT ME
+BASE_DIR = Path(__file__).resolve().parent if '__file__' in globals() else Path.cwd()   # project folder (edit if needed)
 NEW_LAS_DIR = BASE_DIR / "PocosCampos"           # .las files of the wells to predict
 MODEL_DIR = BASE_DIR / "model_output" / "model"    # created by train_rhob_model.py
 OUT_DIR = BASE_DIR / "predictions"
