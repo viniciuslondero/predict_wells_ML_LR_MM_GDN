@@ -68,7 +68,7 @@ GR_REF = None
 # rhob_common.py -> MINERALS, MINERAL_SETS). Mineral densities are fine-tuned on
 # the training wells within +/- MINERAL_MAX_CHANGE g/cc of the chart values.
 MINERAL_CALIBRATE = True
-MINERAL_MAX_CHANGE = 0.25
+MINERAL_MAX_CHANGE = 0.05
 
 NUM_FEATURES = ['GR', 'VP']   # numeric model inputs (+ lithology one-hot)
 USE_LITHOLOGY = True

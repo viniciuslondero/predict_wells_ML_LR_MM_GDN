@@ -598,12 +598,15 @@ def normalize_gr(df, ref=None, min_dist=1.0, min_samples=50):
     return df, ref, pd.DataFrame(rows).set_index('WELL')
 
 
-def prepare_well(path, markers, required, step=STEP, valid_ranges=None, use_file_lithology=True):
+def prepare_well(path, markers, required, step=STEP, valid_ranges=None, use_file_lithology=True,
+                 return_all=False):
     """
     Full preparation of one well: load -> resample 0.1524 m -> Ariri cut ->
     lithology mapping -> distance to lithology boundary -> (optional) valid-range
     filter -> keep rows where all `required` columns exist.
     `markers` = {'WELL': {'top': .., 'base': ..}}
+    return_all=True -> also returns every row in the interval BEFORE the required-column
+    filter (used to keep GR / lithology in the exported LAS where VP is missing).
     """
     df, info = load_las_well(path)
     well = info['WELL']
@@ -630,11 +633,14 @@ def prepare_well(path, markers, required, step=STEP, valid_ranges=None, use_file
         for log, nrem in removed.items():
             info[f'{log} out of range (removed)'] = nrem
     req_cols = ['LITO_UPSCALED' if c in ('LITO', 'LITO_CODE') else c for c in required]
+    all_rows = df.copy()                       # every row in the interval (for export only)
     df = df.dropna(subset=req_cols).reset_index(drop=True)
     info['rows_used'] = len(df)
     if len(df):
         info['md_min'], info['md_max'] = df['MD'].min(), df['MD'].max()
         info['final_step_m'] = round(float(df['MD'].diff().mode().iloc[0]), 5) if len(df) > 1 else np.nan
+    if return_all:
+        return df, info, all_rows
     return df, info
 
 
@@ -959,7 +965,7 @@ def plot_model_tracks(wdf, title, models, den_col='DEN', logs=('GR', 'VP'), lito
     has_den = den_col in w and w[den_col].notna().any()
     for ax, (kind, _) in zip(axes, spec):
         alpha = 1.0 if kind == 'LITHO' else lito_alpha
-        if kind != 'FLAG':                       # no lithology shading behind the FLAG track
+        if kind not in ('FLAG', 'STACK'):        # no lithology shading behind FLAG / mineral fractions
             for z1, z2, lit in blocks:
                 ax.axhspan(z1, z2, color=UPSCALE_COLORS.get(lit, 'white'), alpha=alpha, lw=0, zorder=0)
         if kind == 'LITHO':
@@ -1135,6 +1141,9 @@ def fig_boxplots(data, order, logs=('GR', 'VP', 'DEN')):
 def lithology_proportions(data, order):
     prop = pd.crosstab(data['WELL'], data['LITO_UPSCALED'], normalize='index')
     prop = prop.reindex(columns=order, fill_value=0) * 100
+    # Wells sorted by salt thickness (MD base - MD top of the rows used), thickest first
+    thick = data.groupby('WELL')['MD'].agg(lambda md: md.max() - md.min())
+    prop = prop.loc[thick.reindex(prop.index).sort_values(ascending=False).index]
     prop.loc['ALL WELLS'] = data['LITO_UPSCALED'].value_counts(normalize=True).reindex(order, fill_value=0) * 100
     return prop
 
@@ -1151,10 +1160,18 @@ def fig_lito_proportions(prop, palette, title='Lithology proportion per well (ro
     return fig
 
 
-def export_las(wdf, path, curves, well_name, other_text=''):
-    """curves: {column: (mnemonic, unit, description)}"""
+def export_las(wdf, path, curves, well_name, other_text='', step=STEP, null=-9999.25):
+    """curves: {column: (mnemonic, unit, description)}
+    Written on a continuous 0.1524 m grid from the first to the last MD: depths with no
+    row (e.g. missing VP) are kept and filled with the NULL value."""
     wdf = wdf.sort_values('MD')
+    k = np.round(wdf['MD'].to_numpy(float) / step).astype(np.int64)
+    wdf = wdf.assign(_k=k).drop_duplicates('_k').set_index('_k')
+    k_grid = np.arange(k.min(), k.max() + 1) if len(k) else k
+    wdf = wdf.reindex(k_grid)
+    wdf['MD'] = np.round(k_grid * step, 4)
     las = lasio.LASFile()
+    las.well['NULL'].value = null
     las.well['WELL'].value = well_name
     las.append_curve('DEPT', wdf['MD'].to_numpy(float), unit='m', descr='Measured depth')
     for col, (mn, unit, descr) in curves.items():

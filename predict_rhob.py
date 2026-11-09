@@ -118,11 +118,13 @@ if not files:
     raise FileNotFoundError(f"No .las files in '{NEW_LAS_DIR}'.")
 
 frames, report, skipped = [], [], {}
+all_rows = {}   # every row in the interval, incl. those without VP etc. (LAS export only)
 for f in files:
     print(f"Reading {os.path.basename(f)} ...")
     try:
-        d, info = rc.prepare_well(f, ARIRI_MARKERS, required=['LITO', 'VP', 'GR'],
-                                  valid_ranges=VALID_RANGES, use_file_lithology=USE_FILE_LITHOLOGY)
+        d, info, d_all = rc.prepare_well(f, ARIRI_MARKERS, required=['LITO', 'VP', 'GR'],
+                                         valid_ranges=VALID_RANGES, use_file_lithology=USE_FILE_LITHOLOGY,
+                                         return_all=True)
     except Exception as e:                       # unreadable / broken file -> skip it, keep going
         skipped[os.path.basename(f)] = str(e).splitlines()[0][:200]
         print(f"  !! SKIPPED: {skipped[os.path.basename(f)]}")
@@ -138,6 +140,7 @@ for f in files:
         print(f"  note: {info['read_note']}")
     frames.append(d)
     report.append(info)
+    all_rows[info['WELL']] = d_all
 
 if skipped:
     rc.show_table(pd.Series(skipped, name='reason').to_frame(), "Files SKIPPED (could not be read)")
@@ -405,6 +408,31 @@ print(f"\nDEN_MERGED = measured DEN + {merge_model} where DEN is missing  [{merg
 # every track, MAE in each header where measured DEN exists, FLAG track
 # (cyan = outside training range, red = unseen lithology), DEN_MERGED and
 # mineral fractions at the end.
+# Plots and LAS export show the WHOLE interval: rows without a prediction (e.g. VP
+# missing) keep their GR / VP / DEN / lithology, model curves are empty there.
+lito_code = {l: i for i, l in enumerate(CATEGORIES)}
+pdata['LITO_UPS_CODE'] = pdata['LITO_UPSCALED'].map(lito_code)
+
+
+def full_well(w, wd):
+    """Predicted rows of well `w` + the interval rows that were not predicted,
+    with the input logs prepared the same way (same GR shift). Plots/export only."""
+    g = all_rows.get(w)
+    if g is None:
+        return wd
+    g = g[~g['MD'].round(4).isin(wd['MD'].round(4))]
+    g = g[g[['GR', 'VP', 'DEN', 'LITO_CODE']].notna().any(axis=1)].copy()
+    if g.empty:
+        return wd
+    g['GR_RAW'] = g['GR']
+    if 'GR_RAW' in wd.columns and len(gr_shift_table) and w in gr_shift_table.index:
+        g['GR'] = g['GR'] - gr_shift_table.loc[w, 'shift_subtracted_API']
+    g['LITO_UPS_CODE'] = g['LITO_UPSCALED'].map(lito_code)
+    g['DEN_MERGED'] = g['DEN']                                   # measured DEN only
+    g['DEN_SOURCE'] = np.where(g['DEN'].notna(), 1, np.nan)
+    return pd.concat([wd, g], ignore_index=True).sort_values('MD').reset_index(drop=True)
+
+
 if PLOT_PER_WELL:
     model_tracks = [(c, n, MODEL_COLORS[n]) for n, c in MODELS.items()]
     model_tracks.append(('DEN_MERGED', f'DEN_MERGED\n({SHORT.get(merge_model, merge_model)})', '#000080'))
@@ -414,7 +442,7 @@ if PLOT_PER_WELL:
         if wd['DEN'].notna().sum() >= 3:
             tag = " | IN-SAMPLE (training well)" if w in meta['training_wells'] else " | blind test"
         fig = rc.plot_model_tracks(
-            wd, f"{w} - predicted DEN{tag}", models=model_tracks, den_col='DEN',
+            full_well(w, wd), f"{w} - predicted DEN{tag}", models=model_tracks, den_col='DEN',
             lito_alpha=LITO_ALPHA, flag_col='PRED_FLAG',
             stack=(([f'V_{m.upper()}' for m in MINERAL_NAMES],
                     [MINERAL_COLORS.get(m, 'k') for m in MINERAL_NAMES], 'Mineral fractions') if MM else None),
@@ -438,9 +466,6 @@ fin(fig, "predicted_den_by_lithology")
 # %% ===========================================================================
 # 5. Export
 # ==============================================================================
-lito_code = {l: i for i, l in enumerate(CATEGORIES)}
-pdata['LITO_UPS_CODE'] = pdata['LITO_UPSCALED'].map(lito_code)
-
 las_curves = {
     'GR_RAW': ('GRRAW', 'API', 'Gamma ray as loaded'),
     'GR': ('GR', 'API', 'Gamma ray (halite-normalised, model input)'),
@@ -463,14 +488,16 @@ las_curves = {
 other = ("LITOUPS codes: " + ", ".join(f"{v}={k}" for k, v in lito_code.items()) +
          f"\nModels trained on {', '.join(meta['training_wells'])}; XGBoost inputs: {', '.join(FEATURE_COLS)}"
          f"\nDENMERGED gaps filled with {merge_model} ({merge_reason})"
-         f"\nSampling 0.1524 m; only rows with LITO+VP+GR inside the Ariri interval.")
+         f"\nSampling 0.1524 m, continuous. Depths without LITO+VP+GR have no prediction: "
+         f"their input logs (GR, VP, DEN, LITO) are kept, DENMERGED = measured DEN if any, "
+         f"everything else -9999.25.")
 
 merge_info = pd.DataFrame({'value': {'DEN_MERGED model': merge_model, 'reason': merge_reason}})
 blind_tables['DEN_MERGED_choice'] = merge_info
 
 for w, wd in pdata.groupby('WELL'):
     p = LAS_OUT / f"{rc.safe_name(w)}_DEN_pred.las"
-    rc.export_las(wd, p, las_curves, w, other)
+    rc.export_las(full_well(w, wd), p, las_curves, w, other)
     print(f"  saved {p}")
 
 pdata.to_csv(OUT_DIR / "all_wells_DEN_predicted.csv", index=False)
